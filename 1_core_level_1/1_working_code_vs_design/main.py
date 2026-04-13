@@ -16,17 +16,17 @@ def book_room(
 ):
     if room_number not in rooms:
         print("Room does not exist")
-        return None
+        return
 
     room = rooms[room_number]
 
     if not room["available"]:
         print("Room not available")
-        return None
+        return
 
     if nights <= 0:
         print("Invalid number of nights")
-        return None
+        return
 
     total_price = room["price"] * nights
 
@@ -54,7 +54,7 @@ def book_room(
     return booking
 
 
-def main() -> None:
+def main():
     book_room("Alice", "alice@example.com", 101, 2)
     book_room("Bob", "bob@example.com", 102, 3, use_discount=True)
     book_room("Charlie", "charlie@example.com", 101, 1)

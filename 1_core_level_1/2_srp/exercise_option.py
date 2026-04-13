@@ -7,44 +7,39 @@ rooms = {
 bookings = []
 
 
-def calculate_price(room: dict, nights: int, use_discount: bool) -> float:
-    total = room["price"] * nights
+def calculate_total_price(room, nights, use_discount):
+    total_price = room["price"] * nights
 
     if use_discount and nights >= 3:
-        total *= 0.9
+        total_price *= 0.9
 
-    return total
+    return total_price
 
 
-def send_booking_confirmation(guest_email: str, room_number: int) -> None:
+def send_booking_confirmation(guest_email, room_number):
     print(f"Sending confirmation email to {guest_email} for room {room_number}")
 
 
-def book_room(
-    guest_name: str,
-    guest_email: str,
-    room_number: int,
-    nights: int,
-    use_discount: bool = False,
-    send_confirmation: bool = True,
-):
+def validate_booking_request(room_number, nights):
     if room_number not in rooms:
         print("Room does not exist")
-        return None
+        return False
 
     room = rooms[room_number]
 
     if not room["available"]:
         print("Room not available")
-        return None
+        return False
 
     if nights <= 0:
         print("Invalid number of nights")
-        return None
+        return False
 
-    total_price = calculate_price(room, nights, use_discount)
+    return True
 
-    booking = {
+
+def build_booking(guest_name, guest_email, room_number, nights, total_price):
+    return {
         "guest_name": guest_name,
         "guest_email": guest_email,
         "room_number": room_number,
@@ -53,8 +48,30 @@ def book_room(
         "status": "confirmed",
     }
 
+
+def mark_room_unavailable(room_number):
+    rooms[room_number]["available"] = False
+
+
+def book_room(
+    guest_name,
+    guest_email,
+    room_number,
+    nights,
+    use_discount=False,
+    send_confirmation=True,
+):
+    if not validate_booking_request(room_number, nights):
+        return
+
+    room = rooms[room_number]
+
+    total_price = calculate_total_price(room, nights, use_discount)
+
+    booking = build_booking(guest_name, guest_email, room_number, nights, total_price)
+
     bookings.append(booking)
-    room["available"] = False
+    mark_room_unavailable(room_number)
 
     print(f"Booked room {room_number} for {guest_name}")
 
