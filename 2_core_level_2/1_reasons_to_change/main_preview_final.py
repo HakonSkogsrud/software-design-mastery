@@ -74,6 +74,13 @@ def calculate_total_price(room, nights, use_discount):
     return total_price
 
 
+def initial_booking_status(room):
+    if room.room_type == "suite":
+        return BookingStatus.PENDING
+
+    return BookingStatus.CONFIRMED
+
+
 def send_booking_confirmation(guest_email, room_number):
     print(f"Sending confirmation email to {guest_email} for room {room_number}")
 
@@ -96,6 +103,26 @@ def validate_booking_request(room_number, nights):
     return True
 
 
+def preview_booking(room_number, nights, use_discount=False):
+    if room_number not in rooms:
+        print("Room does not exist")
+        return
+
+    if nights <= 0:
+        print("Invalid number of nights")
+        return
+
+    room = rooms[room_number]
+    total_price = calculate_total_price(room, nights, use_discount)
+    status = initial_booking_status(room)
+
+    print("Preview:")
+    print(f"Room {room.number} ({room.room_type})")
+    print(f"Nights: {nights}")
+    print(f"Total price: {total_price}")
+    print(f"Initial status: {status}")
+
+
 def book_room(booking_request: BookingRequest):
     if not validate_booking_request(
         booking_request.room_number, booking_request.nights
@@ -114,6 +141,7 @@ def book_room(booking_request: BookingRequest):
         room_number=booking_request.room_number,
         nights=booking_request.nights,
         total_price=total_price,
+        status=initial_booking_status(room),
     )
 
     bookings.append(booking)
@@ -121,7 +149,7 @@ def book_room(booking_request: BookingRequest):
 
     print(f"Booked room {booking_request.room_number} for {booking_request.guest_name}")
 
-    if booking_request.send_confirmation:
+    if booking_request.send_confirmation and booking.is_confirmed():
         send_booking_confirmation(
             booking_request.guest_email, booking_request.room_number
         )
@@ -163,6 +191,12 @@ def upgrade_room(guest_email, current_room, new_room):
 
 
 def main() -> None:
+    preview_booking(101, 2)
+    print()
+
+    preview_booking(201, 2)
+    print()
+
     book_room(
         BookingRequest(
             guest_name="Alice",
@@ -171,25 +205,16 @@ def main() -> None:
             nights=2,
         )
     )
+    print()
+
     book_room(
         BookingRequest(
             guest_name="Bob",
             guest_email="bob@example.com",
-            room_number=102,
-            nights=3,
-            use_discount=True,
+            room_number=201,
+            nights=2,
         )
     )
-    book_room(
-        BookingRequest(
-            guest_name="Charlie",
-            guest_email="charlie@example.com",
-            room_number=101,
-            nights=1,
-        )
-    )
-
-    upgrade_room("alice@example.com", 101, 201)
 
 
 if __name__ == "__main__":
