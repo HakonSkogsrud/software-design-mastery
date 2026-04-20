@@ -1,42 +1,10 @@
 from dataclasses import dataclass
-from datetime import date
 from decimal import Decimal
 from enum import StrEnum
 from typing import Iterable
 
-# --- Domain Types ---
-
-type BookingId = str
 type GuestName = str
-
-
-class RoomType(StrEnum):
-    SINGLE = "single"
-    DOUBLE = "double"
-    SUITE = "suite"
-
-
-@dataclass(frozen=True, slots=True)
-class GuestCount:
-    value: int
-
-    def __post_init__(self) -> None:
-        if self.value < 1:
-            raise ValueError("Guest count must be at least 1")
-
-
-@dataclass(frozen=True, slots=True)
-class Period:
-    check_in: date
-    check_out: date
-
-    def __post_init__(self) -> None:
-        if self.check_out <= self.check_in:
-            raise ValueError("Check-out must be after check-in")
-
-    @property
-    def nights(self) -> int:
-        return (self.check_out - self.check_in).days
+type RoomNumber = int
 
 
 class BookingStatus(StrEnum):
@@ -45,18 +13,39 @@ class BookingStatus(StrEnum):
     CANCELLED = "cancelled"
 
 
-# --- Domain Model ---
+@dataclass(frozen=True, slots=True)
+class EmailAddress:
+    value: str
+
+    def __post_init__(self) -> None:
+        if "@" not in self.value:
+            raise ValueError("Guest email must be valid")
+
+
+@dataclass(frozen=True, slots=True)
+class StayNights:
+    value: int
+
+    def __post_init__(self) -> None:
+        if self.value < 1:
+            raise ValueError("Nights must be at least 1")
+
+
+@dataclass
+class Room:
+    number: RoomNumber
+    room_type: str
+    price_per_night: Decimal
 
 
 @dataclass
 class Booking:
-    booking_id: BookingId
     guest_name: GuestName
-    room_type: RoomType
-    period: Period
-    guest_count: GuestCount
-    status: BookingStatus
+    guest_email: EmailAddress
+    room_number: RoomNumber
+    nights: StayNights
     total_price: Decimal
+    status: BookingStatus = BookingStatus.PENDING
 
     def __post_init__(self) -> None:
         if not self.guest_name.strip():
@@ -65,45 +54,29 @@ class Booking:
         if self.total_price < 0:
             raise ValueError("Total price cannot be negative")
 
-    def confirm(self) -> None:
-        if self.status is not BookingStatus.PENDING:
-            raise ValueError("Only pending bookings can be confirmed")
-        self.status = BookingStatus.CONFIRMED
 
-    def cancel(self) -> None:
-        if self.status not in {
-            BookingStatus.PENDING,
-            BookingStatus.CONFIRMED,
-        }:
-            raise ValueError("Only pending or confirmed bookings can be cancelled")
-        self.status = BookingStatus.CANCELLED
-
-
-# --- Pricing Policy ---
-
-
-class PricingPolicy:
-    def calculate_price(
-        self,
-        room_type: RoomType,
-        period: Period,
-        guest_count: GuestCount,
-    ) -> Decimal:
-        base_prices: dict[RoomType, Decimal] = {
-            RoomType.SINGLE: Decimal("90.00"),
-            RoomType.DOUBLE: Decimal("140.00"),
-            RoomType.SUITE: Decimal("220.00"),
+class RoomRepository:
+    def __init__(self) -> None:
+        self._rooms: dict[RoomNumber, Room] = {
+            101: Room(
+                number=101,
+                room_type="single",
+                price_per_night=Decimal("100.00"),
+            ),
+            102: Room(
+                number=102,
+                room_type="double",
+                price_per_night=Decimal("140.00"),
+            ),
+            201: Room(
+                number=201,
+                room_type="suite",
+                price_per_night=Decimal("220.00"),
+            ),
         }
 
-        total = base_prices[room_type] * period.nights
-
-        if guest_count.value > 2:
-            total += Decimal("20.00") * (guest_count.value - 2) * period.nights
-
-        return total
-
-
-# --- Repository ---
+    def get(self, room_number: RoomNumber) -> Room | None:
+        return self._rooms.get(room_number)
 
 
 class BookingRepository:
@@ -117,79 +90,83 @@ class BookingRepository:
         return self._bookings
 
 
-# --- Service ---
+class PricingPolicy:
+    def calculate_total_price(self, room: Room, nights: int) -> Decimal:
+        return room.price_per_night * nights
 
 
 class BookingService:
     def __init__(
         self,
         booking_repository: BookingRepository,
+        room_repository: RoomRepository,
         pricing_policy: PricingPolicy,
     ) -> None:
         self._booking_repository = booking_repository
+        self._room_repository = room_repository
         self._pricing_policy = pricing_policy
 
     def create_booking(
         self,
         guest_name: GuestName,
-        room_type: str,
-        check_in: date,
-        check_out: date,
-        guest_count: int,
+        guest_email: str,
+        room_number: RoomNumber,
+        nights: int,
     ) -> Booking:
-        period = Period(check_in=check_in, check_out=check_out)
-        validated_guest_count = GuestCount(guest_count)
-        validated_room_type = RoomType(room_type)
+        room = self._room_repository.get(room_number)
+        if room is None:
+            raise ValueError("Room does not exist")
 
-        total_price = self._pricing_policy.calculate_price(
-            room_type=validated_room_type,
-            period=period,
-            guest_count=validated_guest_count,
+        validated_email = EmailAddress(guest_email)
+        validated_nights = StayNights(nights)
+
+        total_price = self._pricing_policy.calculate_total_price(
+            room=room,
+            nights=validated_nights.value,
         )
 
         booking = Booking(
-            booking_id="generated-id",
             guest_name=guest_name,
-            room_type=validated_room_type,
-            period=period,
-            guest_count=validated_guest_count,
-            status=BookingStatus.PENDING,
+            guest_email=validated_email,
+            room_number=room.number,
+            nights=validated_nights,
             total_price=total_price,
+            status=BookingStatus.PENDING,
         )
 
         self._booking_repository.save(booking)
         return booking
 
 
-# --- Example Function Using Generic Input ---
-
-
 def total_revenue(bookings: Iterable[Booking]) -> Decimal:
     total = Decimal("0.00")
     for booking in bookings:
-        total += booking.total_price
+        if booking.status is not BookingStatus.CANCELLED:
+            total += booking.total_price
     return total
 
 
-# --- Entry Point ---
-
-
 def main() -> None:
-    repository = BookingRepository()
+    booking_repository = BookingRepository()
+    room_repository = RoomRepository()
     pricing_policy = PricingPolicy()
-    booking_service = BookingService(repository, pricing_policy)
 
-    booking = booking_service.create_booking(
-        guest_name="Alice Johnson",
-        room_type="double",
-        check_in=date(2026, 5, 10),
-        check_out=date(2026, 5, 14),
-        guest_count=2,
+    service = BookingService(
+        booking_repository=booking_repository,
+        room_repository=room_repository,
+        pricing_policy=pricing_policy,
     )
 
-    print(booking)
-    print(repository.all())
-    print("Total revenue:", total_revenue(repository.all()))
+    booking = service.create_booking(
+        guest_name="Alice Johnson",
+        guest_email="alice@example.com",
+        room_number=101,
+        nights=3,
+    )
+
+    print("Created:", booking)
+    print("All bookings:", booking_repository.all())
+    print("Total revenue:", total_revenue(booking_repository.all()))
 
 
 if __name__ == "__main__":

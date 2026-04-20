@@ -176,6 +176,7 @@ def upgrade_room(guest_email, current_room, new_room):
             new_price = rooms[new_room].price * booking.nights
 
             booking.change_room(new_room, new_price)
+            booking.status = initial_booking_status(rooms[new_room])
 
             rooms[current_room].mark_available()
             rooms[new_room].mark_unavailable()
