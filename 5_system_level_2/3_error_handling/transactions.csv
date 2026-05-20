@@ -1,0 +1,4 @@
+id,description,category,amount,currency,transaction_date
+csv-001,Groceries,Food,84.25,EUR,2026-05-01
+csv-002,Train ticket,Transport,18.50,EUR,2026-05-03
+csv-003,Book,Education,32.99,EUR,2026-05-04
