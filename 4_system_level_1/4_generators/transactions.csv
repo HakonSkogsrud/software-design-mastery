@@ -1,0 +1,6 @@
+id,description,category,amount,currency,transaction_date
+tx-001,Coffee,Food,3.50,EUR,2026-05-01
+tx-002,Groceries,Food,42.10,EUR,2026-05-03
+tx-003,Train ticket,Transport,8.75,EUR,2026-05-04
+tx-004,Book,Education,19.99,EUR,2026-05-06
+tx-005,Restaurant,Food,36.40,EUR,2026-04-28
