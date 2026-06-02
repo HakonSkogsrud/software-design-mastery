@@ -3,4 +3,5 @@ name = "system_1_protocol_abc"
 version = "0.1.0"
 requires-python = ">=3.14"
 dependencies = [
+    "pytest>=9.0.3",
 ]

@@ -77,12 +77,9 @@ class ExcludeRefunds:
         return transaction.amount >= 0
 
 
+@dataclass(frozen=True)
 class LargePurchasesOnly:
-    def __init__(
-        self,
-        minimum_amount: Decimal,
-    ) -> None:
-        self.minimum_amount = minimum_amount
+    minimum_amount: Decimal
 
     def include(
         self,
@@ -91,18 +88,15 @@ class LargePurchasesOnly:
         return transaction.amount >= self.minimum_amount
 
 
-class CategoryOnly:
-    def __init__(
-        self,
-        category: str,
-    ) -> None:
-        self.category = category
+# @dataclass(frozen=True)
+# class CategoryOnly:
+#     category: str
 
-    def include(
-        self,
-        transaction: Transaction,
-    ) -> bool:
-        return transaction.category == self.category
+#     def include(
+#         self,
+#         transaction: Transaction,
+#     ) -> bool:
+#         return transaction.category == self.category
 
 
 def load_transactions() -> list[Transaction]:
@@ -152,16 +146,16 @@ def main() -> None:
 
     print_report(report)
 
-    print()
-    print("Food-only report")
-    print("================")
+    # print()
+    # print("Food-only report")
+    # print("================")
 
-    food_report = generate_spending_report(
-        transactions,
-        transaction_filter=CategoryOnly("Food"),
-    )
+    # food_report = generate_spending_report(
+    #     transactions,
+    #     transaction_filter=CategoryOnly("Food"),
+    # )
 
-    print_report(food_report)
+    # print_report(food_report)
 
 
 if __name__ == "__main__":

@@ -54,7 +54,9 @@ class CsvTransactionImporter:
         ]
 
 
-def synchronize_importer(importer: CsvTransactionImporter) -> None:
+def synchronize_importer(
+    importer: CsvTransactionImporter,
+) -> list[Transaction]:
     print(f"Synchronizing {importer.source_name()}")
 
     if importer.supports_incremental_sync():
@@ -66,10 +68,7 @@ def synchronize_importer(importer: CsvTransactionImporter) -> None:
 
     print(f"Imported {len(transactions)} transactions")
 
-    for transaction in transactions:
-        print(transaction)
-
-    print()
+    return transactions
 
 
 def main() -> None:

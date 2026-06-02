@@ -1,7 +1,7 @@
-from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
+from typing import Callable
 
 
 @dataclass(frozen=True)
@@ -21,7 +21,7 @@ class SpendingReport:
     transaction_count: int
 
 
-TransactionFilter = Callable[[Transaction], bool]
+type TransactionFilter = Callable[[Transaction], bool]
 
 
 def generate_spending_report(
@@ -75,15 +75,15 @@ def large_purchases_only(
     return transaction.amount >= Decimal("100.00")
 
 
-def category_only(
-    category: str,
-) -> TransactionFilter:
-    def matches_category(
-        transaction: Transaction,
-    ) -> bool:
-        return transaction.category == category
+# def category_only(
+#     category: str,
+# ) -> TransactionFilter:
+#     def matches_category(
+#         transaction: Transaction,
+#     ) -> bool:
+#         return transaction.category == category
 
-    return matches_category
+#     return matches_category
 
 
 def load_transactions() -> list[Transaction]:
@@ -133,16 +133,16 @@ def main() -> None:
 
     print_report(report)
 
-    print()
-    print("Food-only report")
-    print("================")
+    # print()
+    # print("Food-only report")
+    # print("================")
 
-    food_report = generate_spending_report(
-        transactions,
-        should_include=category_only("Food"),
-    )
+    # food_report = generate_spending_report(
+    #     transactions,
+    #     should_include=category_only("Food"),
+    # )
 
-    print_report(food_report)
+    # print_report(food_report)
 
 
 if __name__ == "__main__":

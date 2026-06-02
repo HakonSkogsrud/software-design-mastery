@@ -1,8 +1,10 @@
 import csv
+import json
+from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
-from typing import Iterable, Protocol
+from typing import Any, Iterable
 
 
 @dataclass(frozen=True)
@@ -15,111 +17,90 @@ class Transaction:
     transaction_date: date
 
 
-class TransactionImporter(Protocol):
-    def import_transactions(self) -> Iterable[Transaction]: ...
-
-    def supports_incremental_sync(self) -> bool: ...
-
-    def source_name(self) -> str: ...
+type RawTransaction = dict[str, Any]
 
 
-class CsvTransactionImporter:
+class FileTransactionImporter(ABC):
     def __init__(self, file_path: str) -> None:
         self.file_path = file_path
 
     def import_transactions(self) -> Iterable[Transaction]:
-        print(f"Streaming transactions from {self.file_path}")
+        print(f"Streaming transactions from {self.source_name()}")
 
-        with open(self.file_path, newline="") as csv_file:
-            reader = csv.DictReader(csv_file)
-
-            for row in reader:
-                yield Transaction(
-                    id=row["id"],
-                    description=row["description"],
-                    category=row["category"],
-                    amount=Decimal(row["amount"]),
-                    currency=row["currency"],
-                    transaction_date=date.fromisoformat(row["transaction_date"]),
-                )
+        for row in self.read_rows():
+            yield self.parse_row(row)
 
     def supports_incremental_sync(self) -> bool:
         return False
 
+    @abstractmethod
+    def read_rows(self) -> Iterable[RawTransaction]:
+        pass
+
+    @abstractmethod
+    def parse_row(self, row: RawTransaction) -> Transaction:
+        pass
+
+    @abstractmethod
+    def source_name(self) -> str:
+        pass
+
+
+class CsvTransactionImporter(FileTransactionImporter):
     def source_name(self) -> str:
         return "csv"
 
+    def read_rows(self) -> Iterable[RawTransaction]:
+        with open(self.file_path, newline="") as csv_file:
+            reader = csv.DictReader(csv_file)
 
-class BankApiClient:
-    def fetch_transactions(self) -> list[dict[str, str]]:
-        return [
-            {
-                "transaction_id": "bank-001",
-                "details": "Salary",
-                "type": "Income",
-                "value": "2500.00",
-                "currency_code": "EUR",
-                "date_posted": "2026-05-02",
-            }
-        ]
+            for row in reader:
+                yield row
 
-
-class BankApiImporter:
-    def __init__(self, api_client: BankApiClient) -> None:
-        self.api_client = api_client
-
-    def import_transactions(self) -> Iterable[Transaction]:
-        print("Fetching transactions from bank API")
-
-        payload = self.api_client.fetch_transactions()
-
-        for item in payload:
-            yield Transaction(
-                id=item["transaction_id"],
-                description=item["details"],
-                category=item["type"],
-                amount=Decimal(item["value"]),
-                currency=item["currency_code"],
-                transaction_date=date.fromisoformat(item["date_posted"]),
-            )
-
-    def supports_incremental_sync(self) -> bool:
-        return True
-
-    def source_name(self) -> str:
-        return "bank_api"
-
-
-class FakeImporter:
-    def import_transactions(self) -> Iterable[Transaction]:
-        yield Transaction(
-            id="test-001",
-            description="Test transaction",
-            category="Testing",
-            amount=Decimal("10.00"),
-            currency="EUR",
-            transaction_date=date(2026, 5, 10),
+    def parse_row(self, row: RawTransaction) -> Transaction:
+        return Transaction(
+            id=str(row["id"]),
+            description=str(row["description"]),
+            category=str(row["category"]),
+            amount=Decimal(str(row["amount"])),
+            currency=str(row["currency"]),
+            transaction_date=date.fromisoformat(str(row["transaction_date"])),
         )
 
-    def supports_incremental_sync(self) -> bool:
-        return True
 
+class BudgetingAppJsonImporter(FileTransactionImporter):
     def source_name(self) -> str:
-        return "fake"
+        return "budgeting_app_json"
+
+    def read_rows(self) -> Iterable[RawTransaction]:
+        with open(self.file_path) as json_file:
+            data = json.load(json_file)
+
+        yield from data["transactions"]
+
+    def parse_row(self, row: RawTransaction) -> Transaction:
+        return Transaction(
+            id=str(row["transaction_id"]),
+            description=str(row["merchant"]),
+            category=str(row["category_name"]),
+            amount=Decimal(str(row["amount_eur"])),
+            currency="EUR",
+            transaction_date=date.fromisoformat(str(row["booked_on"])),
+        )
 
 
-def filter_by_currency(
+def filter_by_category(
     transactions: Iterable[Transaction],
-    currency: str,
+    category: str,
 ) -> Iterable[Transaction]:
     for transaction in transactions:
-        if transaction.currency == currency:
+        if transaction.category == category:
             yield transaction
 
 
 def synchronize_importer(
-    importer: TransactionImporter,
-) -> None:
+    importer: FileTransactionImporter,
+) -> Iterable[Transaction]:
     print(f"Synchronizing {importer.source_name()}")
 
     if importer.supports_incremental_sync():
@@ -127,28 +108,29 @@ def synchronize_importer(
     else:
         print("Running full sync")
 
-    transactions = importer.import_transactions()
-    transactions = filter_by_currency(transactions, "EUR")
-
     transaction_count = 0
 
-    for transaction in transactions:
-        print(transaction)
+    for transaction in importer.import_transactions():
         transaction_count += 1
+        print(transaction)
+        yield transaction
 
     print(f"Imported {transaction_count} transactions")
     print()
 
 
 def main() -> None:
-    importers: list[TransactionImporter] = [
+    importers: list[FileTransactionImporter] = [
         CsvTransactionImporter("transactions.csv"),
-        BankApiImporter(BankApiClient()),
-        FakeImporter(),
+        BudgetingAppJsonImporter("budgeting_app_transactions.json"),
     ]
 
     for importer in importers:
-        synchronize_importer(importer)
+        transactions = synchronize_importer(importer)
+        food_transactions = filter_by_category(transactions, "Food")
+
+        for transaction in food_transactions:
+            print(f"Selected transaction: {transaction.description}")
 
 
 if __name__ == "__main__":
