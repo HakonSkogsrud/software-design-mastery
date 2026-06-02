@@ -1,11 +1,11 @@
-# after_context_object.py
+# focused_context_object.py
 
 import csv
 import logging
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
-from typing import Iterable, Protocol
+from typing import Protocol
 
 
 @dataclass(frozen=True)
@@ -24,7 +24,7 @@ class ImportConfig:
 
 
 class Logger(Protocol):
-    def info(self, message: str, *args: object) -> None: ...
+    def info(self, msg: object, *args: object) -> None: ...
 
 
 @dataclass(frozen=True)
@@ -34,7 +34,7 @@ class ImportContext:
 
 
 class TransactionImporter(Protocol):
-    def import_transactions(self) -> Iterable[Transaction]: ...
+    def import_transactions(self) -> list[Transaction]: ...
 
     def supports_incremental_sync(self) -> bool: ...
 
@@ -42,21 +42,15 @@ class TransactionImporter(Protocol):
 
 
 class CsvTransactionImporter:
-    def __init__(self, file_path: str, context: ImportContext) -> None:
+    def __init__(self, file_path: str) -> None:
         self.file_path = file_path
-        self.context = context
 
-    def import_transactions(self) -> Iterable[Transaction]:
-        self.context.logger.info(
-            "Streaming transactions from %s",
-            self.file_path,
-        )
-
+    def import_transactions(self) -> list[Transaction]:
         with open(self.file_path, newline="") as csv_file:
             reader = csv.DictReader(csv_file)
 
-            for row in reader:
-                yield Transaction(
+            return [
+                Transaction(
                     id=row["id"],
                     description=row["description"],
                     category=row["category"],
@@ -64,6 +58,8 @@ class CsvTransactionImporter:
                     currency=row["currency"],
                     transaction_date=date.fromisoformat(row["transaction_date"]),
                 )
+                for row in reader
+            ]
 
     def supports_incremental_sync(self) -> bool:
         return False
@@ -73,12 +69,7 @@ class CsvTransactionImporter:
 
 
 class BankApiClient:
-    def __init__(self, context: ImportContext) -> None:
-        self.context = context
-
     def fetch_transactions(self) -> list[dict[str, str]]:
-        self.context.logger.info("Calling bank API")
-
         return [
             {
                 "transaction_id": "bank-001",
@@ -92,21 +83,14 @@ class BankApiClient:
 
 
 class BankApiImporter:
-    def __init__(
-        self,
-        api_client: BankApiClient,
-        context: ImportContext,
-    ) -> None:
+    def __init__(self, api_client: BankApiClient) -> None:
         self.api_client = api_client
-        self.context = context
 
-    def import_transactions(self) -> Iterable[Transaction]:
-        self.context.logger.info("Fetching transactions from bank API")
-
+    def import_transactions(self) -> list[Transaction]:
         payload = self.api_client.fetch_transactions()
 
-        for item in payload:
-            yield Transaction(
+        return [
+            Transaction(
                 id=item["transaction_id"],
                 description=item["details"],
                 category=item["type"],
@@ -114,6 +98,8 @@ class BankApiImporter:
                 currency=item["currency_code"],
                 transaction_date=date.fromisoformat(item["date_posted"]),
             )
+            for item in payload
+        ]
 
     def supports_incremental_sync(self) -> bool:
         return True
@@ -126,7 +112,10 @@ class TransactionSynchronizer:
     def __init__(self, context: ImportContext) -> None:
         self.context = context
 
-    def synchronize(self, importer: TransactionImporter) -> None:
+    def synchronize(
+        self,
+        importer: TransactionImporter,
+    ) -> list[Transaction]:
         logger = self.context.logger
 
         logger.info("Synchronizing %s", importer.source_name())
@@ -137,21 +126,17 @@ class TransactionSynchronizer:
             logger.info("Running full sync")
 
         transactions = importer.import_transactions()
-        transactions = self._filter_by_currency(transactions)
+        transactions = self._filter_by_target_currency(transactions)
 
-        transaction_count = 0
-
-        for transaction in transactions:
-            print(transaction)
-            transaction_count += 1
-
-        logger.info("Imported %s transactions", transaction_count)
+        logger.info("Imported %s transactions", len(transactions))
         print()
 
-    def _filter_by_currency(
+        return transactions
+
+    def _filter_by_target_currency(
         self,
-        transactions: Iterable[Transaction],
-    ) -> Iterable[Transaction]:
+        transactions: list[Transaction],
+    ) -> list[Transaction]:
         target_currency = self.context.config.target_currency
 
         self.context.logger.info(
@@ -159,9 +144,11 @@ class TransactionSynchronizer:
             target_currency,
         )
 
-        for transaction in transactions:
-            if transaction.currency == target_currency:
-                yield transaction
+        return [
+            transaction
+            for transaction in transactions
+            if transaction.currency == target_currency
+        ]
 
 
 def create_logger() -> logging.Logger:
@@ -175,11 +162,9 @@ def main() -> None:
         config=ImportConfig(target_currency="EUR"),
     )
 
-    api_client = BankApiClient(context)
-
     importers: list[TransactionImporter] = [
-        CsvTransactionImporter("transactions.csv", context),
-        BankApiImporter(api_client, context),
+        CsvTransactionImporter("transactions.csv"),
+        BankApiImporter(BankApiClient()),
     ]
 
     synchronizer = TransactionSynchronizer(context)

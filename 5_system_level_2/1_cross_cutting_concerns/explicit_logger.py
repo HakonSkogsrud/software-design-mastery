@@ -1,14 +1,11 @@
-# before_global_logger.py
+# explicit_logger.py
 
 import csv
 import logging
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
-from typing import Iterable, Protocol
-
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("finance")
+from typing import Protocol
 
 
 @dataclass(frozen=True)
@@ -21,8 +18,15 @@ class Transaction:
     transaction_date: date
 
 
+class Logger(Protocol):
+    def info(self, msg: object, *args: object) -> None: ...
+
+
 class TransactionImporter(Protocol):
-    def import_transactions(self) -> Iterable[Transaction]: ...
+    def import_transactions(
+        self,
+        logger: Logger,
+    ) -> list[Transaction]: ...
 
     def supports_incremental_sync(self) -> bool: ...
 
@@ -33,14 +37,20 @@ class CsvTransactionImporter:
     def __init__(self, file_path: str) -> None:
         self.file_path = file_path
 
-    def import_transactions(self) -> Iterable[Transaction]:
-        logger.info("Streaming transactions from %s", self.file_path)
+    def import_transactions(
+        self,
+        logger: Logger,
+    ) -> list[Transaction]:
+        logger.info(
+            "Loading transactions from %s",
+            self.file_path,
+        )
 
         with open(self.file_path, newline="") as csv_file:
             reader = csv.DictReader(csv_file)
 
-            for row in reader:
-                yield Transaction(
+            return [
+                Transaction(
                     id=row["id"],
                     description=row["description"],
                     category=row["category"],
@@ -48,6 +58,8 @@ class CsvTransactionImporter:
                     currency=row["currency"],
                     transaction_date=date.fromisoformat(row["transaction_date"]),
                 )
+                for row in reader
+            ]
 
     def supports_incremental_sync(self) -> bool:
         return False
@@ -57,7 +69,10 @@ class CsvTransactionImporter:
 
 
 class BankApiClient:
-    def fetch_transactions(self) -> list[dict[str, str]]:
+    def fetch_transactions(
+        self,
+        logger: Logger,
+    ) -> list[dict[str, str]]:
         logger.info("Calling bank API")
 
         return [
@@ -73,16 +88,24 @@ class BankApiClient:
 
 
 class BankApiImporter:
-    def __init__(self, api_client: BankApiClient) -> None:
+    def __init__(
+        self,
+        api_client: BankApiClient,
+    ) -> None:
         self.api_client = api_client
 
-    def import_transactions(self) -> Iterable[Transaction]:
+    def import_transactions(
+        self,
+        logger: Logger,
+    ) -> list[Transaction]:
         logger.info("Fetching transactions from bank API")
 
-        payload = self.api_client.fetch_transactions()
+        payload = self.api_client.fetch_transactions(
+            logger,
+        )
 
-        for item in payload:
-            yield Transaction(
+        return [
+            Transaction(
                 id=item["transaction_id"],
                 description=item["details"],
                 category=item["type"],
@@ -90,6 +113,8 @@ class BankApiImporter:
                 currency=item["currency_code"],
                 transaction_date=date.fromisoformat(item["date_posted"]),
             )
+            for item in payload
+        ]
 
     def supports_incremental_sync(self) -> bool:
         return True
@@ -98,46 +123,52 @@ class BankApiImporter:
         return "bank_api"
 
 
-def filter_by_currency(
-    transactions: Iterable[Transaction],
-    currency: str,
-) -> Iterable[Transaction]:
-    logger.info("Filtering transactions by currency: %s", currency)
-
-    for transaction in transactions:
-        if transaction.currency == currency:
-            yield transaction
-
-
-def synchronize_importer(importer: TransactionImporter) -> None:
-    logger.info("Synchronizing %s", importer.source_name())
+def synchronize_importer(
+    importer: TransactionImporter,
+    logger: Logger,
+) -> list[Transaction]:
+    logger.info(
+        "Synchronizing %s",
+        importer.source_name(),
+    )
 
     if importer.supports_incremental_sync():
         logger.info("Running incremental sync")
     else:
         logger.info("Running full sync")
 
-    transactions = importer.import_transactions()
-    transactions = filter_by_currency(transactions, "EUR")
+    transactions = importer.import_transactions(
+        logger,
+    )
 
-    transaction_count = 0
+    logger.info(
+        "Imported %s transactions",
+        len(transactions),
+    )
 
-    for transaction in transactions:
-        print(transaction)
-        transaction_count += 1
-
-    logger.info("Imported %s transactions", transaction_count)
     print()
+
+    return transactions
+
+
+def create_logger() -> logging.Logger:
+    logging.basicConfig(level=logging.INFO)
+    return logging.getLogger("finance")
 
 
 def main() -> None:
+    logger = create_logger()
+
     importers: list[TransactionImporter] = [
         CsvTransactionImporter("transactions.csv"),
         BankApiImporter(BankApiClient()),
     ]
 
     for importer in importers:
-        synchronize_importer(importer)
+        synchronize_importer(
+            importer,
+            logger,
+        )
 
 
 if __name__ == "__main__":

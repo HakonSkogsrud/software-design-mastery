@@ -1,11 +1,12 @@
-# before_shared_state.py
+# partial_application.py
 
 import csv
 import logging
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
-from typing import Iterable, Protocol
+from functools import partial
+from typing import Callable, Protocol
 
 
 @dataclass(frozen=True)
@@ -19,34 +20,30 @@ class Transaction:
 
 
 class Logger(Protocol):
-    def info(self, message: str, *args: object) -> None: ...
+    def info(self, msg: object, *args: object) -> None: ...
 
 
 class TransactionImporter(Protocol):
-    def import_transactions(self) -> Iterable[Transaction]: ...
+    def import_transactions(self) -> list[Transaction]: ...
 
     def supports_incremental_sync(self) -> bool: ...
 
     def source_name(self) -> str: ...
 
 
-monthly_totals: dict[str, Decimal] = {}
-account_balance = Decimal("0.00")
+type TransactionFilter = Callable[[list[Transaction]], list[Transaction]]
 
 
 class CsvTransactionImporter:
-    def __init__(self, file_path: str, logger: Logger) -> None:
+    def __init__(self, file_path: str) -> None:
         self.file_path = file_path
-        self.logger = logger
 
-    def import_transactions(self) -> Iterable[Transaction]:
-        self.logger.info("Streaming transactions from %s", self.file_path)
-
+    def import_transactions(self) -> list[Transaction]:
         with open(self.file_path, newline="") as csv_file:
             reader = csv.DictReader(csv_file)
 
-            for row in reader:
-                yield Transaction(
+            return [
+                Transaction(
                     id=row["id"],
                     description=row["description"],
                     category=row["category"],
@@ -54,6 +51,8 @@ class CsvTransactionImporter:
                     currency=row["currency"],
                     transaction_date=date.fromisoformat(row["transaction_date"]),
                 )
+                for row in reader
+            ]
 
     def supports_incremental_sync(self) -> bool:
         return False
@@ -63,12 +62,7 @@ class CsvTransactionImporter:
 
 
 class BankApiClient:
-    def __init__(self, logger: Logger) -> None:
-        self.logger = logger
-
     def fetch_transactions(self) -> list[dict[str, str]]:
-        self.logger.info("Calling bank API")
-
         return [
             {
                 "transaction_id": "bank-001",
@@ -82,17 +76,14 @@ class BankApiClient:
 
 
 class BankApiImporter:
-    def __init__(self, api_client: BankApiClient, logger: Logger) -> None:
+    def __init__(self, api_client: BankApiClient) -> None:
         self.api_client = api_client
-        self.logger = logger
 
-    def import_transactions(self) -> Iterable[Transaction]:
-        self.logger.info("Fetching transactions from bank API")
-
+    def import_transactions(self) -> list[Transaction]:
         payload = self.api_client.fetch_transactions()
 
-        for item in payload:
-            yield Transaction(
+        return [
+            Transaction(
                 id=item["transaction_id"],
                 description=item["details"],
                 category=item["type"],
@@ -100,6 +91,8 @@ class BankApiImporter:
                 currency=item["currency_code"],
                 transaction_date=date.fromisoformat(item["date_posted"]),
             )
+            for item in payload
+        ]
 
     def supports_incremental_sync(self) -> bool:
         return True
@@ -109,55 +102,39 @@ class BankApiImporter:
 
 
 def filter_by_currency(
-    transactions: Iterable[Transaction],
+    transactions: list[Transaction],
     currency: str,
     logger: Logger,
-) -> Iterable[Transaction]:
+) -> list[Transaction]:
     logger.info("Filtering transactions by currency: %s", currency)
 
-    for transaction in transactions:
-        if transaction.currency == currency:
-            yield transaction
+    return [
+        transaction for transaction in transactions if transaction.currency == currency
+    ]
 
 
-def synchronize_importer(
-    importer: TransactionImporter,
-    logger: Logger,
-) -> None:
-    global account_balance
+class TransactionSynchronizer:
+    def __init__(
+        self,
+        transaction_filter: TransactionFilter,
+        logger: Logger,
+    ) -> None:
+        self.transaction_filter = transaction_filter
+        self.logger = logger
 
-    logger.info("Synchronizing %s", importer.source_name())
+    def synchronize(
+        self,
+        importer: TransactionImporter,
+    ) -> list[Transaction]:
+        self.logger.info("Synchronizing %s", importer.source_name())
 
-    transactions = importer.import_transactions()
-    transactions = filter_by_currency(transactions, "EUR", logger)
+        transactions = importer.import_transactions()
+        transactions = self.transaction_filter(transactions)
 
-    transaction_count = 0
+        self.logger.info("Imported %s transactions", len(transactions))
+        print()
 
-    for transaction in transactions:
-        print(transaction)
-
-        account_balance += transaction.amount
-
-        current_total = monthly_totals.get(
-            transaction.category,
-            Decimal("0.00"),
-        )
-        monthly_totals[transaction.category] = current_total + transaction.amount
-
-        transaction_count += 1
-
-    logger.info("Imported %s transactions", transaction_count)
-    print()
-
-
-def print_summary() -> None:
-    print("Spending summary")
-    print("----------------")
-    print(f"Account balance: €{account_balance}")
-    print()
-
-    for category, total in monthly_totals.items():
-        print(f"- {category}: €{total}")
+        return transactions
 
 
 def create_logger() -> logging.Logger:
@@ -168,17 +145,24 @@ def create_logger() -> logging.Logger:
 def main() -> None:
     logger = create_logger()
 
-    api_client = BankApiClient(logger)
+    eur_filter = partial(
+        filter_by_currency,
+        currency="EUR",
+        logger=logger,
+    )
 
     importers: list[TransactionImporter] = [
-        CsvTransactionImporter("transactions.csv", logger),
-        BankApiImporter(api_client, logger),
+        CsvTransactionImporter("transactions.csv"),
+        BankApiImporter(BankApiClient()),
     ]
 
-    for importer in importers:
-        synchronize_importer(importer, logger)
+    synchronizer = TransactionSynchronizer(
+        transaction_filter=eur_filter,
+        logger=logger,
+    )
 
-    print_summary()
+    for importer in importers:
+        synchronizer.synchronize(importer)
 
 
 if __name__ == "__main__":

@@ -5,7 +5,7 @@ import logging
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal, InvalidOperation
-from typing import Iterable, Protocol
+from typing import Protocol
 
 
 class FinanceError(Exception):
@@ -57,51 +57,31 @@ class Logger(Protocol):
 
 
 class TransactionImporter(Protocol):
-    def import_transactions(self) -> Iterable[Transaction]: ...
+    def import_transactions(self) -> list[Transaction]: ...
 
     def supports_incremental_sync(self) -> bool: ...
 
     def source_name(self) -> str: ...
 
 
-class SpendingSummary:
-    def __init__(self) -> None:
-        self._totals_by_category: dict[str, Decimal] = {}
-
-    def record(self, transaction: Transaction) -> None:
-        current_total = self._totals_by_category.get(
-            transaction.category,
-            Decimal("0.00"),
-        )
-
-        self._totals_by_category[transaction.category] = (
-            current_total + transaction.amount
-        )
-
-    def totals_by_category(self) -> dict[str, Decimal]:
-        return dict(self._totals_by_category)
-
-
 class CsvTransactionImporter:
-    def __init__(self, file_path: str, logger: Logger) -> None:
+    def __init__(self, file_path: str) -> None:
         self.file_path = file_path
-        self.logger = logger
 
-    def import_transactions(self) -> Iterable[Transaction]:
-        self.logger.info("Streaming transactions from %s", self.file_path)
-
+    def import_transactions(self) -> list[Transaction]:
         try:
-            csv_file = open(self.file_path, newline="")
+            with open(self.file_path, newline="") as csv_file:
+                reader = csv.DictReader(csv_file)
+
+                return [
+                    self._parse_transaction(row, line_number)
+                    for line_number, row in enumerate(reader, start=2)
+                ]
+
         except OSError as error:
             raise TransactionImportError(
                 f"Could not open transaction file: {self.file_path}"
             ) from error
-
-        with csv_file:
-            reader = csv.DictReader(csv_file)
-
-            for line_number, row in enumerate(reader, start=2):
-                yield self._parse_transaction(row, line_number)
 
     def _parse_transaction(
         self,
@@ -117,14 +97,17 @@ class CsvTransactionImporter:
                 currency=row["currency"],
                 transaction_date=date.fromisoformat(row["transaction_date"]),
             )
+
         except KeyError as error:
             raise InvalidTransactionError(
                 f"Missing field {error} on line {line_number}"
             ) from error
+
         except InvalidOperation as error:
             raise InvalidTransactionError(
                 f"Invalid amount on line {line_number}: {row.get('amount')}"
             ) from error
+
         except ValueError as error:
             raise InvalidTransactionError(
                 f"Invalid date on line {line_number}: {row.get('transaction_date')}"
@@ -138,13 +121,10 @@ class CsvTransactionImporter:
 
 
 class BankApiClient:
-    def __init__(self, logger: Logger, should_fail: bool = False) -> None:
-        self.logger = logger
+    def __init__(self, should_fail: bool = False) -> None:
         self.should_fail = should_fail
 
     def fetch_transactions(self) -> list[dict[str, str]]:
-        self.logger.info("Calling bank API")
-
         if self.should_fail:
             raise ConnectionError("Bank API is unavailable")
 
@@ -161,20 +141,18 @@ class BankApiClient:
 
 
 class BankApiImporter:
-    def __init__(self, api_client: BankApiClient, logger: Logger) -> None:
+    def __init__(self, api_client: BankApiClient) -> None:
         self.api_client = api_client
-        self.logger = logger
 
-    def import_transactions(self) -> Iterable[Transaction]:
-        self.logger.info("Fetching transactions from bank API")
-
+    def import_transactions(self) -> list[Transaction]:
         try:
             payload = self.api_client.fetch_transactions()
+
         except ConnectionError as error:
             raise BankApiError("Could not fetch bank transactions") from error
 
-        for item in payload:
-            yield Transaction(
+        return [
+            Transaction(
                 id=item["transaction_id"],
                 description=item["details"],
                 category=item["type"],
@@ -182,6 +160,8 @@ class BankApiImporter:
                 currency=item["currency_code"],
                 transaction_date=date.fromisoformat(item["date_posted"]),
             )
+            for item in payload
+        ]
 
     def supports_incremental_sync(self) -> bool:
         return True
@@ -190,50 +170,27 @@ class BankApiImporter:
         return "bank_api"
 
 
-def filter_by_currency(
-    transactions: Iterable[Transaction],
-    currency: str,
-    logger: Logger,
-) -> Iterable[Transaction]:
-    logger.info("Filtering transactions by currency: %s", currency)
+class TransactionSynchronizer:
+    def __init__(self, logger: Logger) -> None:
+        self.logger = logger
 
-    for transaction in transactions:
-        if transaction.currency == currency:
-            yield transaction
+    def synchronize(
+        self,
+        importer: TransactionImporter,
+    ) -> list[Transaction]:
+        self.logger.info("Synchronizing %s", importer.source_name())
 
+        if importer.supports_incremental_sync():
+            self.logger.info("Running incremental sync")
+        else:
+            self.logger.info("Running full sync")
 
-def synchronize_importer(
-    importer: TransactionImporter,
-    summary: SpendingSummary,
-    logger: Logger,
-) -> None:
-    logger.info("Synchronizing %s", importer.source_name())
+        transactions = importer.import_transactions()
 
-    if importer.supports_incremental_sync():
-        logger.info("Running incremental sync")
-    else:
-        logger.info("Running full sync")
+        self.logger.info("Imported %s transactions", len(transactions))
+        print()
 
-    transactions = importer.import_transactions()
-    transactions = filter_by_currency(transactions, "EUR", logger)
-
-    transaction_count = 0
-
-    for transaction in transactions:
-        print(transaction)
-        summary.record(transaction)
-        transaction_count += 1
-
-    logger.info("Imported %s transactions", transaction_count)
-    print()
-
-
-def print_spending_summary(summary: SpendingSummary) -> None:
-    print("Spending summary")
-    print("----------------")
-
-    for category, total in summary.totals_by_category().items():
-        print(f"- {category}: €{total}")
+        return transactions
 
 
 def create_logger() -> logging.Logger:
@@ -242,27 +199,28 @@ def create_logger() -> logging.Logger:
 
 
 def main() -> None:
-    logger = create_logger()
-    summary = SpendingSummary()
-
-    api_client = BankApiClient(logger)
-
     importers: list[TransactionImporter] = [
-        CsvTransactionImporter("transactions.csv", logger),
-        BankApiImporter(api_client, logger),
+        CsvTransactionImporter("transactions.csv"),
+        BankApiImporter(BankApiClient()),
     ]
+
+    synchronizer = TransactionSynchronizer(
+        logger=create_logger(),
+    )
 
     for importer in importers:
         try:
-            synchronize_importer(importer, summary, logger)
+            transactions = synchronizer.synchronize(importer)
         except TransactionImportError as error:
-            logger.error(
+            synchronizer.logger.error(
                 "Skipping importer %s: %s",
                 importer.source_name(),
                 error,
             )
+            continue
 
-    print_spending_summary(summary)
+        for transaction in transactions:
+            print(transaction)
 
 
 if __name__ == "__main__":

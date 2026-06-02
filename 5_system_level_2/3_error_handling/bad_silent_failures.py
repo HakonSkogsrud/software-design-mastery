@@ -5,7 +5,7 @@ import logging
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
-from typing import Iterable
+from typing import Protocol
 
 
 @dataclass(frozen=True)
@@ -18,68 +18,89 @@ class Transaction:
     transaction_date: date
 
 
-class SpendingSummary:
-    def __init__(self) -> None:
-        self._totals_by_category: dict[str, Decimal] = {}
+class Logger(Protocol):
+    def info(self, msg: object, *args: object) -> None: ...
 
-    def record(self, transaction: Transaction) -> None:
-        current_total = self._totals_by_category.get(
-            transaction.category,
-            Decimal("0.00"),
-        )
-        self._totals_by_category[transaction.category] = (
-            current_total + transaction.amount
-        )
 
-    def totals_by_category(self) -> dict[str, Decimal]:
-        return dict(self._totals_by_category)
+class TransactionImporter(Protocol):
+    def import_transactions(self) -> list[Transaction]: ...
+
+    def supports_incremental_sync(self) -> bool: ...
+
+    def source_name(self) -> str: ...
 
 
 class CsvTransactionImporter:
-    def __init__(self, file_path: str, logger: logging.Logger) -> None:
+    def __init__(self, file_path: str) -> None:
         self.file_path = file_path
-        self.logger = logger
 
-    def import_transactions(self) -> Iterable[Transaction]:
+    def import_transactions(self) -> list[Transaction]:
+        transactions: list[Transaction] = []
+
         with open(self.file_path, newline="") as csv_file:
             reader = csv.DictReader(csv_file)
 
             for row in reader:
                 try:
-                    yield Transaction(
-                        id=row["id"],
-                        description=row["description"],
-                        category=row["category"],
-                        amount=Decimal(row["amount"]),
-                        currency=row["currency"],
-                        transaction_date=date.fromisoformat(row["transaction_date"]),
+                    transactions.append(
+                        Transaction(
+                            id=row["id"],
+                            description=row["description"],
+                            category=row["category"],
+                            amount=Decimal(row["amount"]),
+                            currency=row["currency"],
+                            transaction_date=date.fromisoformat(
+                                row["transaction_date"]
+                            ),
+                        )
                     )
                 except Exception:
-                    # Bad: the system silently ignores broken data.
+                    # Bad: broken rows disappear silently.
                     pass
 
+        return transactions
 
-def print_spending_summary(summary: SpendingSummary) -> None:
-    print("Spending summary")
-    print("----------------")
+    def supports_incremental_sync(self) -> bool:
+        return False
 
-    for category, total in summary.totals_by_category().items():
-        print(f"- {category}: €{total}")
+    def source_name(self) -> str:
+        return "csv"
+
+
+class TransactionSynchronizer:
+    def __init__(self, logger: Logger) -> None:
+        self.logger = logger
+
+    def synchronize(
+        self,
+        importer: TransactionImporter,
+    ) -> list[Transaction]:
+        self.logger.info("Synchronizing %s", importer.source_name())
+
+        transactions = importer.import_transactions()
+
+        self.logger.info("Imported %s transactions", len(transactions))
+        print()
+
+        return transactions
+
+
+def create_logger() -> logging.Logger:
+    logging.basicConfig(level=logging.INFO)
+    return logging.getLogger("finance")
 
 
 def main() -> None:
-    logging.basicConfig(level=logging.INFO)
-    logger = logging.getLogger("finance")
+    importer = CsvTransactionImporter("transactions_with_errors.csv")
 
-    summary = SpendingSummary()
-    importer = CsvTransactionImporter("transactions_with_errors.csv", logger)
+    synchronizer = TransactionSynchronizer(
+        logger=create_logger(),
+    )
 
-    for transaction in importer.import_transactions():
+    transactions = synchronizer.synchronize(importer)
+
+    for transaction in transactions:
         print(transaction)
-        summary.record(transaction)
-
-    print()
-    print_spending_summary(summary)
 
 
 if __name__ == "__main__":

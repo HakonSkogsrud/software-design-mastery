@@ -1,5 +1,5 @@
 [project]
-name = "system_2_global_coupling"
+name = "system_2_cross_cutting_concerns"
 version = "0.1.0"
 requires-python = ">=3.14"
 dependencies = [
