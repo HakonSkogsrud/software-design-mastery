@@ -17,15 +17,65 @@ class TransactionImportError(FinanceError):
 
 
 class InvalidTransactionError(TransactionImportError):
-    pass
+    def __init__(
+        self,
+        source: str,
+        line_number: int,
+        field: str,
+        value: str,
+    ) -> None:
+        self.source = source
+        self.line_number = line_number
+        self.field = field
+        self.value = value
+
+        super().__init__(
+            f"Invalid value '{value}' for field '{field}' "
+            f"in {source} on line {line_number}"
+        )
+
+
+class MissingTransactionFieldError(TransactionImportError):
+    def __init__(
+        self,
+        source: str,
+        line_number: int,
+        field: str,
+    ) -> None:
+        self.source = source
+        self.line_number = line_number
+        self.field = field
+
+        super().__init__(f"Missing field '{field}' in {source} on line {line_number}")
 
 
 class UnsupportedCurrencyError(TransactionImportError):
-    pass
+    def __init__(
+        self,
+        source: str,
+        currency: str,
+        transaction_id: str,
+    ) -> None:
+        self.source = source
+        self.currency = currency
+        self.transaction_id = transaction_id
+
+        super().__init__(
+            f"Unsupported currency '{currency}' "
+            f"for transaction '{transaction_id}' from {source}"
+        )
 
 
 class BankApiError(TransactionImportError):
-    pass
+    def __init__(
+        self,
+        endpoint: str,
+        reason: str,
+    ) -> None:
+        self.endpoint = endpoint
+        self.reason = reason
+
+        super().__init__(f"Bank API call to '{endpoint}' failed: {reason}")
 
 
 SUPPORTED_CURRENCIES = {"EUR", "USD"}
@@ -39,15 +89,6 @@ class Transaction:
     amount: Decimal
     currency: str
     transaction_date: date
-
-    def __post_init__(self) -> None:
-        if self.amount <= Decimal("0.00"):
-            raise InvalidTransactionError(
-                f"Transaction amount must be positive: {self.amount}"
-            )
-
-        if self.currency not in SUPPORTED_CURRENCIES:
-            raise UnsupportedCurrencyError(f"Unsupported currency: {self.currency}")
 
 
 class Logger(Protocol):
@@ -88,30 +129,84 @@ class CsvTransactionImporter:
         row: dict[str, str],
         line_number: int,
     ) -> Transaction:
+        transaction_id = self._required(row, "id", line_number)
+        description = self._required(row, "description", line_number)
+        category = self._required(row, "category", line_number)
+        amount_text = self._required(row, "amount", line_number)
+        currency = self._required(row, "currency", line_number)
+        transaction_date_text = self._required(
+            row,
+            "transaction_date",
+            line_number,
+        )
+
         try:
-            return Transaction(
-                id=row["id"],
-                description=row["description"],
-                category=row["category"],
-                amount=Decimal(row["amount"]),
-                currency=row["currency"],
-                transaction_date=date.fromisoformat(row["transaction_date"]),
-            )
-
-        except KeyError as error:
-            raise InvalidTransactionError(
-                f"Missing field {error} on line {line_number}"
-            ) from error
-
+            amount = Decimal(amount_text)
         except InvalidOperation as error:
             raise InvalidTransactionError(
-                f"Invalid amount on line {line_number}: {row.get('amount')}"
+                source=self.file_path,
+                line_number=line_number,
+                field="amount",
+                value=amount_text,
             ) from error
 
+        try:
+            transaction_date = date.fromisoformat(transaction_date_text)
         except ValueError as error:
             raise InvalidTransactionError(
-                f"Invalid date on line {line_number}: {row.get('transaction_date')}"
+                source=self.file_path,
+                line_number=line_number,
+                field="transaction_date",
+                value=transaction_date_text,
             ) from error
+
+        if currency not in SUPPORTED_CURRENCIES:
+            raise UnsupportedCurrencyError(
+                source=self.file_path,
+                currency=currency,
+                transaction_id=transaction_id,
+            )
+
+        if amount <= Decimal("0.00"):
+            raise InvalidTransactionError(
+                source=self.file_path,
+                line_number=line_number,
+                field="amount",
+                value=amount_text,
+            )
+
+        return Transaction(
+            id=transaction_id,
+            description=description,
+            category=category,
+            amount=amount,
+            currency=currency,
+            transaction_date=transaction_date,
+        )
+
+    def _required(
+        self,
+        row: dict[str, str],
+        field: str,
+        line_number: int,
+    ) -> str:
+        try:
+            value = row[field]
+        except KeyError as error:
+            raise MissingTransactionFieldError(
+                source=self.file_path,
+                line_number=line_number,
+                field=field,
+            ) from error
+
+        if value == "":
+            raise MissingTransactionFieldError(
+                source=self.file_path,
+                line_number=line_number,
+                field=field,
+            )
+
+        return value
 
     def supports_incremental_sync(self) -> bool:
         return False
@@ -147,21 +242,33 @@ class BankApiImporter:
     def import_transactions(self) -> list[Transaction]:
         try:
             payload = self.api_client.fetch_transactions()
-
         except ConnectionError as error:
-            raise BankApiError("Could not fetch bank transactions") from error
+            raise BankApiError(
+                endpoint="/transactions",
+                reason=str(error),
+            ) from error
 
-        return [
-            Transaction(
-                id=item["transaction_id"],
-                description=item["details"],
-                category=item["type"],
-                amount=Decimal(item["value"]),
-                currency=item["currency_code"],
-                transaction_date=date.fromisoformat(item["date_posted"]),
+        return [self._parse_transaction(item) for item in payload]
+
+    def _parse_transaction(self, item: dict[str, str]) -> Transaction:
+        transaction_id = item["transaction_id"]
+        currency = item["currency_code"]
+
+        if currency not in SUPPORTED_CURRENCIES:
+            raise UnsupportedCurrencyError(
+                source="bank_api",
+                currency=currency,
+                transaction_id=transaction_id,
             )
-            for item in payload
-        ]
+
+        return Transaction(
+            id=transaction_id,
+            description=item["details"],
+            category=item["type"],
+            amount=Decimal(item["value"]),
+            currency=currency,
+            transaction_date=date.fromisoformat(item["date_posted"]),
+        )
 
     def supports_incremental_sync(self) -> bool:
         return True
@@ -199,24 +306,57 @@ def create_logger() -> logging.Logger:
 
 
 def main() -> None:
+    logger = create_logger()
+
     importers: list[TransactionImporter] = [
-        CsvTransactionImporter("transactions.csv"),
+        CsvTransactionImporter("transactions_with_errors.csv"),
         BankApiImporter(BankApiClient()),
     ]
 
-    synchronizer = TransactionSynchronizer(
-        logger=create_logger(),
-    )
+    synchronizer = TransactionSynchronizer(logger)
 
     for importer in importers:
         try:
             transactions = synchronizer.synchronize(importer)
-        except TransactionImportError as error:
-            synchronizer.logger.error(
-                "Skipping importer %s: %s",
-                importer.source_name(),
-                error,
+
+        except InvalidTransactionError as error:
+            logger.error(
+                "Invalid transaction in %s on line %s: %s=%s",
+                error.source,
+                error.line_number,
+                error.field,
+                error.value,
             )
+            continue
+
+        except MissingTransactionFieldError as error:
+            logger.error(
+                "Missing field in %s on line %s: %s",
+                error.source,
+                error.line_number,
+                error.field,
+            )
+            continue
+
+        except UnsupportedCurrencyError as error:
+            logger.error(
+                "Unsupported currency in %s: transaction=%s currency=%s",
+                error.source,
+                error.transaction_id,
+                error.currency,
+            )
+            continue
+
+        except BankApiError as error:
+            logger.error(
+                "Bank API error at %s: %s",
+                error.endpoint,
+                error.reason,
+            )
+            continue
+
+        except TransactionImportError as error:
+            logger.error("Import failed: %s", error)
             continue
 
         for transaction in transactions:
