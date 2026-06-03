@@ -1,8 +1,12 @@
 from decimal import Decimal
-
-from transactions.models import Transaction
+from typing import Protocol
 
 from .models import SpendingReport
+
+
+class Transaction(Protocol):
+    category: str
+    amount: Decimal
 
 
 def calculate_total_spending(
