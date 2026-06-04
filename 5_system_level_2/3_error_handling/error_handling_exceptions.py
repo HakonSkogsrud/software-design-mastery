@@ -1,5 +1,3 @@
-# error_handling_exceptions.py
-
 import csv
 import logging
 from dataclasses import dataclass

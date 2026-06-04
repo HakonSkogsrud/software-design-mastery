@@ -1,5 +1,3 @@
-# bad_silent_failures.py
-
 import csv
 import logging
 from dataclasses import dataclass
