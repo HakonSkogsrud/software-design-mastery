@@ -1,20 +1,12 @@
-# transaction_scope_failure.py
-
-from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
-from typing import Any, Protocol
+from typing import Any, Iterator, Protocol
 
 from fastapi import FastAPI
 
 app = FastAPI()
-
-
-# -----------------------------
-# Domain model
-# -----------------------------
 
 
 @dataclass(frozen=True)
@@ -27,9 +19,8 @@ class Transaction:
     transaction_date: date
 
 
-# -----------------------------
-# Database connection
-# -----------------------------
+class TransactionRepository(Protocol):
+    def add(self, transaction: Transaction) -> None: ...
 
 
 class DatabaseConnection:
@@ -39,49 +30,19 @@ class DatabaseConnection:
     def close(self) -> None:
         print("Closing database connection")
 
-    def begin_transaction(self) -> None:
-        print("Beginning database transaction")
-
-    def commit(self) -> None:
-        print("Committing database transaction")
-
-    def rollback(self) -> None:
-        print("Rolling back database transaction")
-
     def insert_transaction(self, transaction: Transaction) -> None:
         print(f"Saving transaction {transaction.id}")
 
 
 @contextmanager
-def transaction_scope() -> Iterator[DatabaseConnection]:
+def database_connection() -> Iterator[DatabaseConnection]:
     connection = DatabaseConnection()
-
     connection.connect()
-    connection.begin_transaction()
 
     try:
         yield connection
-    except Exception:
-        connection.rollback()
-        raise
-    else:
-        connection.commit()
     finally:
         connection.close()
-
-
-# -----------------------------
-# Port
-# -----------------------------
-
-
-class TransactionRepository(Protocol):
-    def add(self, transaction: Transaction) -> None: ...
-
-
-# -----------------------------
-# Adapter
-# -----------------------------
 
 
 class SqlTransactionRepository:
@@ -92,11 +53,6 @@ class SqlTransactionRepository:
         self._connection.insert_transaction(transaction)
 
 
-# -----------------------------
-# Application logic
-# -----------------------------
-
-
 def create_transaction(
     transaction: Transaction,
     repository: TransactionRepository,
@@ -104,23 +60,9 @@ def create_transaction(
     repository.add(transaction)
 
 
-def update_monthly_budget(
-    category: str,
-    amount: Decimal,
-) -> None:
-    raise RuntimeError("Budget service unavailable")
-
-
-# -----------------------------
-# REST API
-# -----------------------------
-
-
 @app.post("/transactions")
-def create_transaction_endpoint(
-    request: dict[str, Any],
-) -> dict[str, str]:
-    with transaction_scope() as connection:
+def create_transaction_endpoint(request: dict[str, Any]) -> dict[str, str]:
+    with database_connection() as connection:
         repository = SqlTransactionRepository(connection)
 
         transaction = Transaction(
@@ -134,9 +76,4 @@ def create_transaction_endpoint(
 
         create_transaction(transaction, repository)
 
-        update_monthly_budget(
-            category=transaction.category,
-            amount=transaction.amount,
-        )
-
-        return {"status": "created"}
+    return {"status": "created"}

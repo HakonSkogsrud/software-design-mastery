@@ -1,7 +1,3 @@
-# connection_context_manager.py
-
-from collections.abc import Iterator
-from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
@@ -10,11 +6,6 @@ from typing import Any, Protocol
 from fastapi import FastAPI
 
 app = FastAPI()
-
-
-# -----------------------------
-# Domain model
-# -----------------------------
 
 
 @dataclass(frozen=True)
@@ -27,9 +18,8 @@ class Transaction:
     transaction_date: date
 
 
-# -----------------------------
-# Database connection
-# -----------------------------
+class TransactionRepository(Protocol):
+    def add(self, transaction: Transaction) -> None: ...
 
 
 class DatabaseConnection:
@@ -43,42 +33,12 @@ class DatabaseConnection:
         print(f"Saving transaction {transaction.id}")
 
 
-@contextmanager
-def database_connection() -> Iterator[DatabaseConnection]:
-    connection = DatabaseConnection()
-    connection.connect()
-
-    try:
-        yield connection
-    finally:
-        connection.close()
-
-
-# -----------------------------
-# Port
-# -----------------------------
-
-
-class TransactionRepository(Protocol):
-    def add(self, transaction: Transaction) -> None: ...
-
-
-# -----------------------------
-# Adapter
-# -----------------------------
-
-
 class SqlTransactionRepository:
     def __init__(self, connection: DatabaseConnection) -> None:
         self._connection = connection
 
     def add(self, transaction: Transaction) -> None:
         self._connection.insert_transaction(transaction)
-
-
-# -----------------------------
-# Application logic
-# -----------------------------
 
 
 def create_transaction(
@@ -88,16 +48,12 @@ def create_transaction(
     repository.add(transaction)
 
 
-# -----------------------------
-# REST API
-# -----------------------------
-
-
 @app.post("/transactions")
-def create_transaction_endpoint(
-    request: dict[str, Any],
-) -> dict[str, str]:
-    with database_connection() as connection:
+def create_transaction_endpoint(request: dict[str, Any]) -> dict[str, str]:
+    connection = DatabaseConnection()
+    connection.connect()
+
+    try:
         repository = SqlTransactionRepository(connection)
 
         transaction = Transaction(
@@ -112,3 +68,6 @@ def create_transaction_endpoint(
         create_transaction(transaction, repository)
 
         return {"status": "created"}
+
+    finally:
+        connection.close()

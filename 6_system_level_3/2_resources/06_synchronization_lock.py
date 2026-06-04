@@ -1,8 +1,6 @@
-# synchronization_lock_api.py
-
-from collections.abc import Iterator
 from contextlib import contextmanager
 from threading import Lock
+from typing import Iterator
 
 sync_lock = Lock()
 
