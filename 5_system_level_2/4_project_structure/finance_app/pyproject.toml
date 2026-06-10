@@ -1,0 +1,10 @@
+[project]
+name = "system_4_project_structure"
+version = "0.1.0"
+requires-python = ">=3.14"
+dependencies = [
+    "pytest>=9.0.3",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
