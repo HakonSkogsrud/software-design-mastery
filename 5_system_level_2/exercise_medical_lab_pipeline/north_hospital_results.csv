@@ -1,0 +1,4 @@
+patient_number,test,result,unit,date
+P-1001,Hemoglobin,8.7,mmol/L,2026-06-01
+P-1002,Glucose,not-a-number,mmol/L,2026-06-01
+P-1003,CRP,4.2,mg/L,2026-06-03

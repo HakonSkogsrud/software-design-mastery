@@ -1,0 +1,4 @@
+patient_id,analysis,measured_value,measurement_unit,measured_at
+P-2001,Hemoglobin,9.1,mmol/L,2026-06-01
+P-2002,Cholesterol,4.8,mmol/L,wrong-date
+P-2003,CRP,3.8,mg/L,2026-06-03
