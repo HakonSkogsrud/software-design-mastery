@@ -1,0 +1,9 @@
+[project]
+name = "master_1_build_vs_buy"
+version = "0.1.0"
+requires-python = ">=3.14"
+dependencies = [
+    "fastapi>=0.136.1",
+    "pydantic>=2.13.4",
+    "uvicorn>=0.47.0",
+]
