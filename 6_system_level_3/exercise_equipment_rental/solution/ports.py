@@ -1,0 +1,19 @@
+from typing import Protocol
+
+from domain import Equipment
+
+
+class EquipmentRepository(Protocol):
+    def add(self, equipment: Equipment) -> None: ...
+
+    def get(self, equipment_id: str) -> Equipment | None: ...
+
+    def update(self, equipment: Equipment) -> None: ...
+
+
+class RentalNotifier(Protocol):
+    def rental_confirmed(
+        self,
+        equipment: Equipment,
+        recipient: str,
+    ) -> None: ...
