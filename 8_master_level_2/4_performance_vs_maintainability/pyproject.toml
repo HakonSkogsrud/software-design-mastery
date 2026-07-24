@@ -1,0 +1,6 @@
+[project]
+name = "master_4_performance_vs_maintainability"
+version = "0.1.0"
+requires-python = ">=3.14"
+dependencies = [
+]
