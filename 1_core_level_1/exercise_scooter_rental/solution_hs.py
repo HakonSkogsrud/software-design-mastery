@@ -1,0 +1,73 @@
+# changes done:
+# both generate_customer_invoide and estimate_maintenance_credit needed to know what a 
+# long rental was. that is not moved to separate funciton. Also both needed to handle missing scooter. 
+# clarity is improved since 
+
+from dataclasses import dataclass
+
+@dataclass
+class Scooter:
+    id: str
+    hourly_rate: int
+    battery: int
+
+scooters: list[Scooter] = [
+    Scooter(id= "SC-101", hourly_rate= 8, battery= 92),
+    Scooter(id= "SC-102", hourly_rate= 12, battery= 55),
+]
+
+LONG_RENTAL_MINUTES = 300
+
+def is_long_rental(minutes) -> bool:
+    return minutes > LONG_RENTAL_MINUTES
+
+
+def generate_customer_invoice(scooter, minutes) -> float:
+
+    total = scooter.hourly_rate * (minutes / 60.)
+
+    if minutes >= 300:
+        total *= 0.85
+
+    print(f"Invoice total: €{total:.2f}")
+
+    return total
+
+
+def estimate_maintenance_credit(scooter, usage_minutes) -> float:
+
+    credit = 0
+
+    if usage_minutes >= 300:
+        credit += 10
+
+    if scooter.battery < 60:
+        credit += 5
+        
+    print(f"Maintenance credit: €{credit:.2f}")
+
+    return credit
+
+
+def find_scooter(scooter_id) -> Scooter :
+    for scooter in scooters:
+        if scooter.id == scooter_id:
+            return scooter
+
+    return None
+
+
+
+if __name__ == "__main__":
+
+    scooter = find_scooter("SC-101")
+    if scooter is not None:
+        generate_customer_invoice(scooter, 360)
+
+    scooter = find_scooter("SC-102")
+    if scooter is not None:
+        estimate_maintenance_credit(scooter, 360)
+
+        
+
+
