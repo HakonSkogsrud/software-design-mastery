@@ -23,7 +23,7 @@ class DeepSpaceSurveyService(ScheduledService):
 class CalibrationService:
     def log(self, message):
         print(f"[CALIBRATION] {message}")
-
+        
     def calibrate(self, telescope_name):
         self.log(f"Calibrating {telescope_name}")
 
